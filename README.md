@@ -4,8 +4,8 @@ This class allow an easy config of a MongoDB collection by providing an interfac
 
 ## Install
 
-	git clone https://github.com/hayj/DomainDuplicate.git
-	pip install ./DomainDuplicate/wm-dist/*.tar.gz
+	git clone https://github.com/hayj/DatabaseTools.git
+	pip install ./DatabaseTools/wm-dist/*.tar.gz
 
 ## Usage
 
