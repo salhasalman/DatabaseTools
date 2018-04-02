@@ -2,8 +2,6 @@
 
 # MongoCollection
 
-## Description
-
 This class allow an easy config of a MongoDB collection by providing an interface which handle authentication, indexes management, data conversion and pretty print of the collection. It can work like a Python dict if you give at least one index.
 
 ## Install
