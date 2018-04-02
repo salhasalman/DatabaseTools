@@ -21,7 +21,7 @@ This class allow an easy config of a MongoDB collection by providing an interfac
  * Automatically convert your data which is not "mongo storable" (sets, enums, objects...)
  * Automatically provide a "version" (if given), a timestamp, and optionally the "hostname" of your computer for each inserted rows
  * The first `indexOn` works like the key of a Python dict so you can use `in` (e.g. `15466 in collection` which is equivalent to `pymongoCollection.find_one({"user_id": 15466}) is not None`).
- * You can also use `__len__` (e.g. `len(collection)`), `__getitem__` (e.g. `collection[15466]`, only in the case you gave at least one `indexOn` at the `__init__`), `__setitem__` and `__delitem__`.
+ * You can also use `__len__` (e.g. `len(collection)`), `__getitem__` (e.g. `collection[15466]`, only in the case you gave at least one `indexOn` at the `__init__`), `__setitem__` and `__delitem__`. Read the [unit test](https://github.com/hayj/DatabaseTools/blob/master/databasetools/test/mongo.py) to have concrete examples.
  * Provide top levels methods like `toDataFrame`, `renameField`, `createIndex`, `getIndexes`, `dropAllIndexes`, `dropIndex`, `resetDatabase`, `resetCollection`... See the code documentation for more details.
 
 ## Parameters
@@ -30,7 +30,7 @@ This class allow an easy config of a MongoDB collection by providing an interfac
  * **collectionName**: The name of the collection, will be created if not exists (mandatory)
  * **host**, **user** and **password**: For the Mongo database (default is "localhost" with no auth)
  * **port**: The port (default "27017")
- * **indexOn**: The name of the index, or a list of indexes names, the first one enable the MongoCollection instance working like a Python dict with `__getitem__`, `__setitem__`, `__contains__`... Read the [unit test](https://github.com/hayj/DatabaseTools/blob/master/databasetools/test/mongo.py) to have concrete examples.
+ * **indexOn**: The name of the index, or a list of indexes names, the first one enable the MongoCollection instance working like a Python dict with `__getitem__`, `__setitem__`, `__contains__`...
  * **indexNotUniqueOn**: A name for a "not unique index" or a list of names
  * **giveTimestamp**: Set it as `True` if you want to add a timestamp on each inserted documents
  * **giveHostname**: Set it as `True` if you want to add the hostname of your computer in documents
