@@ -15,7 +15,7 @@ This class allow an easy config of a MongoDB collection by providing an interfac
 
 	>>> from databasetools.mongo import *
 	>>> collection = MongoCollection("db_name", "collection_name", indexOn=["user_id"],
-				indexNotUniqueOn=["education"])
+				indexNotUniqueOn=["job"])
 
 ## Features
 
