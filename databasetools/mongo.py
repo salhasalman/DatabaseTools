@@ -179,10 +179,13 @@ class MongoCollection():
 
 
 
-    def __setitem__(self, firstIndexOnValue, value): # TODO test
+    def __setitem__(self, firstIndexOnValue, value):
         key = self.getKeyColumn()
         query = {key: firstIndexOnValue}
-        self.updateSet(query, value)
+        if self.has(firstIndexOnValue):
+            self.updateSet(query, value)
+        else:
+            self.insert(mergeDicts(query, value))
     def updateSet(self, query, setQuery):
         """
             Update rows but add the "$set" key automatically
@@ -379,14 +382,14 @@ class MongoCollection():
         return self.collection.find(query, limit=limit, sort=sort, projection=projection)
 
 
-    def __getitem__(self, o): # TODO test
+    def __getitem__(self, o):
         key = self.getKeyColumn()
         return self.findOne({key: o})
-    def findOne(self, query={}):
+    def findOne(self, query={}, projection=None):
         """
             Works the same as pymongo collection.find_one
         """
-        return self.collection.find_one(query) # return None if no element was found
+        return self.collection.find_one(query, projection=projection) # return None if no element was found
 
     def deleteOne(self, query=None):
         """
@@ -399,7 +402,7 @@ class MongoCollection():
                 logError(str(e), self)
         return None
 
-    def __delitem__(self, key): # TODO test
+    def __delitem__(self, key):
         """
             Delete the element which amtch with the first "indexOn"
         """
@@ -451,7 +454,7 @@ class MongoCollection():
         return df
 
 
-    def __contains__(self, key): # TODO test
+    def __contains__(self, key):
         return self.has(key)
     def has(self, query={}):
         """
