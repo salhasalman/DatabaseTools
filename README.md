@@ -1,5 +1,3 @@
-
-
 # MongoCollection
 
 This class allow an easy config of a MongoDB collection by providing an interface which handle authentication, indexes management, data conversion and pretty print of the collection. It can work like a Python dict if you give at least one index.
@@ -32,7 +30,7 @@ This class allow an easy config of a MongoDB collection by providing an interfac
  * **collectionName**: The name of the collection, will be created if not exists (mandatory)
  * **host**, **user** and **password**: For the Mongo database (default is "localhost" with no auth)
  * **port**: The port (default "27017")
- * **indexOn**: The name of the index, or a list of indexes names, the first one enable the MongoCollection instance working like a Python dict with `__getitem__`, `__setitem__`, `__contains__`...
+ * **indexOn**: The name of the index, or a list of indexes names, the first one enable the MongoCollection instance working like a Python dict with `__getitem__`, `__setitem__`, `__contains__`... Read the [unit test](https://github.com/hayj/DatabaseTools/blob/master/databasetools/test/mongo.py) to have concrete examples.
  * **indexNotUniqueOn**: A name for a "not unique index" or a list of names
  * **giveTimestamp**: Set it as `True` if you want to add a timestamp on each inserted documents
  * **giveHostname**: Set it as `True` if you want to add the hostname of your computer in documents
@@ -40,6 +38,8 @@ This class allow an easy config of a MongoDB collection by providing an interfac
  * **databaseRoot**: In the case your user has a main database which is not admin, you can set it via this init param
  * **logger**: A logger from `systemtools.logger` (see [SystemTools](https://github.com/hayj/SystemTools))
  * **verbose**: To set the verbose (`True` or `False`)
+
+## Examples
 
 ## MongoDB installation
 
