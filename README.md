@@ -43,3 +43,6 @@ This class allow an easy config of a MongoDB collection by providing an interfac
  * **logger**: A logger from `systemtools.logger` (see [SystemTools](https://github.com/hayj/SystemTools))
  * **verbose**: To set the verbose (`True` or `False`)
 
+## MongoDB installation
+
+If you are on Ubuntu, I recommend to follow this tutorial if you want to install MongoDB on localhost : <https://docs.mongodb.com/manual/tutorial/install-mongodb-on-ubuntu/>. Or you can open the database and secure it: <https://www.digitalocean.com/community/tutorials/how-to-install-and-secure-mongodb-on-ubuntu-16-04>.
