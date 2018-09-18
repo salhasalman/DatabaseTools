@@ -11,6 +11,9 @@ from systemtools.hayj import *
 from datastructuretools.processing import *
 import urllib
 import enum
+from multiprocessing import Lock, Process
+import copy
+from bson.objectid import ObjectId
 
 # TODO expireAfterSeconds: <int> Used to create an expiring (TTL) collection. MongoDB will automatically delete documents from this collection after <int> seconds. The indexed field must be a UTC datetime or the data will not expire.
 # unique: if True creates a uniqueness constraint on the index.
@@ -18,15 +21,18 @@ import enum
 #                             ("eliot", pymongo.ASCENDING)]) # Par default ascending
 
 def idsToMongoHost(host="localhost", user=None, password=None, port="27017", databaseRoot=None):
-    if host is None or user is None:
-        return None
+    if host is None:
+        host = "localhost"
     if databaseRoot is None:
         databaseRoot = ""
     if user is None:
         user = ""
     if password is None:
         password = ""
-    return "mongodb://" + user + ":" + password + "@" + host + ":" + port + "/" + databaseRoot
+    if user is None or user == "":
+        return "mongodb://" + host + ":" + port + "/" + databaseRoot
+    else:
+        return "mongodb://" + user + ":" + password + "@" + host + ":" + port + "/" + databaseRoot
 
 def getIndexes(collection):
     return list(getIndexesGenerator(collection))
@@ -89,11 +95,13 @@ class MongoCollection():
         port="27017",
         host=None,
         databaseRoot=None,
+        hideIndexException=False,
     ):
         """
             Read the README
         """
         # All vars :
+        self.hideIndexException = hideIndexException
         self.logger = logger
         self.verbose = verbose
         self.version = version
@@ -122,15 +130,37 @@ class MongoCollection():
         if self.databaseRoot is None:
             self.databaseRoot = ""
 
+        self.scheme = None
         if self.host is not None:
-            self.host = idsToMongoHost(host=self.host,
+            self.scheme = idsToMongoHost(host=self.host,
                                        user=self.user,
                                        password=self.password,
                                        port=self.port,
                                        databaseRoot=self.databaseRoot)
+        self.indexExceptionAlreadyPrinted = False
 
         # And init the db :
         self.initDataBase()
+
+    def createCompoundIndex(self, indexes, unique=True, background=True):
+        if indexes is None or len(indexes) < 1:
+            logError("Please set more than 1 index for a compound index!", self)
+        else:
+            try:
+                name = ""
+                for current in indexes:
+                    if isinstance(current, tuple):
+                        current = current[0]
+                    name += current + "_"
+                name = name[:-1]
+                self.collection.create_index(indexes,
+                                             name=name,
+                                             unique=unique,
+                                             background=background)
+            except Exception as e:
+                if not self.indexExceptionAlreadyPrinted and not self.hideIndexException:
+                    logError("Unable to create index " + str(index) + " in " + self.dbName + " " + self.collectionName, self)
+                    self.indexExceptionAlreadyPrinted = True
 
     def createIndexes(self, *args, **kwargs):
         self.createIndex(*args, **kwargs)
@@ -144,9 +174,14 @@ class MongoCollection():
             for index in indexes:
                 if type is not None:
                     index = [(index, type)]
-                self.collection.create_index(index,
-                                             unique=unique,
-                                             background=background)
+                try:
+                    self.collection.create_index(index,
+                                                 unique=unique,
+                                                 background=background)
+                except Exception as e:
+                    if not self.indexExceptionAlreadyPrinted and not self.hideIndexException:
+                        logError("Unable to create index " + str(index) + " in " + self.dbName + " " + self.collectionName, self)
+                        self.indexExceptionAlreadyPrinted = True
 
     def rename(self, newName):
         """
@@ -167,17 +202,15 @@ class MongoCollection():
             askContinue()
         self.update({}, {'$rename': {old: new}})
 
-    def dropAllIndexes(self):
-        """
-            drop all indexes of the collection
-        """
-        self.dropIndex(self.getIndexes())
+    # def dropAllIndexes(self):
+    #     """
+    #         drop all indexes of the collection
+    #     """
+    #     self.dropIndex(self.getIndexes())
 
     def update(self, query, updateQuery):
 #         self.collection.update(query, updateQuery, multi=True)
         self.collection.update_many(query, updateQuery)
-
-
 
     def __setitem__(self, firstIndexOnValue, value):
         key = self.getKeyColumn()
@@ -246,19 +279,87 @@ class MongoCollection():
         for name in namesToDelete:
             self.collection.drop_index(name)
 
-
-
+    def dropAllIndexes(self):
+        for key, value in self.collection.index_information().items():
+            if "_id" not in key:
+                self.collection.drop_index(key)
+    
     def getIndexes(self):
         """
             Return the list of indexes names
         """
         return getIndexes(self.collection)
 
+    # def distinctIds(self):
+    #     return self.distinct("_id")
+        # try:
+        #     return self.distinct("_id")
+        # except Exception as e:
+        #     log(str(e) + "\nWe retry using batch samples...", self)
+        #     return mongoDistinctIds(self.collection,
+        #         logger=self.logger, verbose=self.verbose)
+
+
+    def distinct(self, field="_id", **kwargs):
+        try:
+            return self.collection.distinct(field, **kwargs)
+        except Exception as e:
+            if field == "_id":
+                log(str(e) + "\nWe retry using batch samples...", self)
+                return mongoDistinctIds(self.collection,
+                    logger=self.logger, verbose=self.verbose)
+            else:
+                raise e
+                return None
+        
+
+    def clone(self):
+        return MongoCollection \
+        (
+            self.dbName,
+            self.collectionName,
+            version=self.version,
+            indexOn=self.indexOn,
+            indexNotUniqueOn=self.indexNotUniqueOn,
+            giveTimestamp=self.giveTimestamp,
+            giveHostname=self.giveHostname,
+            verbose=self.verbose,
+            logger=self.logger,
+            user=self.user,
+            password=self.password,
+            port=self.port,
+            host=self.host,
+            databaseRoot=self.databaseRoot,
+        )
+
+    def getCloneArgs(self):
+        return \
+        (
+            [
+                self.dbName,
+                self.collectionName,
+            ],
+            {
+                "version": self.version,
+                "indexOn": self.indexOn,
+                "indexNotUniqueOn": self.indexNotUniqueOn,
+                "giveTimestamp": self.giveTimestamp,
+                "giveHostname": self.giveHostname,
+                "verbose": self.verbose,
+                "logger": self.logger,
+                "user": self.user,
+                "password": self.password,
+                "port": self.port,
+                "host": self.host,
+                "databaseRoot": self.databaseRoot,
+            },
+        )
+
     def initDataBase(self):
         try:
             self.client.close()
         except: pass
-        self.client = MongoClient(host=self.host)
+        self.client = MongoClient(host=self.scheme)
         self.db = self.client[self.dbName]
         self.collection = self.db[self.collectionName]
         self.createIndexes(self.indexOn, unique=True)
@@ -319,11 +420,14 @@ class MongoCollection():
         return self.size()
     def count(self):
         return self.size()
-    def size(self):
+    def size(self, estimate=True):
         """
             Work the same as pymongo collection.count({})
         """
-        return self.collection.count({})
+        if estimate:
+            return self.collection.estimated_document_count()
+        else:
+            return self.collection.count_documents({})
 
     def insert(self, row):
         """
@@ -332,10 +436,12 @@ class MongoCollection():
         """
         if not isinstance(row, list) and not isinstance(row, dict):
             logError("row have to be list or dict", self)
+            return False
         else:
             if not isinstance(row, list):
                 row = [row]
             for currentRow in row:
+                currentRow = copy.deepcopy(currentRow)
                 currentRow = dictToMongoStorable(currentRow)
                 if self.version is not None and "version" not in currentRow:
                     currentRow["version"] = self.version
@@ -345,7 +451,19 @@ class MongoCollection():
                 if self.giveHostname and "hostname" not in currentRow:
                     hostname = getHostname()
                     currentRow["hostname"] = hostname
-                self.collection.insert_one(currentRow)
+                try:
+                    self.collection.insert_one(currentRow)
+                    return True
+                except Exception as e:
+                    logException(e, self)
+                    try:
+                        log("The row is:\n", self)
+                        log("TODO looking for the 'OverflowError: MongoDB can only handle up to 8-byte ints'\n", self)
+                        log(lts(reduceDictStr(currentRow)), self)
+                    except:
+                        pass
+                    return False
+        return False
 
 #     def parallelUpdate(self, query, updateQuery, parallelUpdates=None):
 #         def getAllIds(request, collection):
@@ -373,13 +491,23 @@ class MongoCollection():
         # https://stackoverflow.com/questions/12664816/random-sampling-from-mongo
         pass # TODO
 
-    def find(self, query={}, limit=0, sort=None, projection=None):
+    def find(self, query={}, limit=0, sort=None, projection=None, **kwargs):
         """
             Works the same as pymongo collection.find but query is optionnal
+            sort example: sort=("timestamp", pymongo.DESCENDING)
+            Warning, sometimes projection doesn't work for a huge find.
+            projection example: projection={‘_id’: True}
         """
         if sort is not None and not isinstance(sort, list):
             sort = [sort]
-        return self.collection.find(query, limit=limit, sort=sort, projection=projection)
+#         if projection is not None and limit == 0:
+#             limit = self.size() + 1
+        for i in range(2):
+            try:
+                return self.collection.find(query, limit=limit, sort=sort, projection=projection, **kwargs)
+            except Exception as e:
+                logException(e, self)
+                time.sleep(0.2)
 
 
     def __getitem__(self, o):
@@ -389,8 +517,15 @@ class MongoCollection():
         """
             Works the same as pymongo collection.find_one
         """
-        return self.collection.find_one(query, projection=projection) # return None if no element was found
+        for i in range(2):
+            try:
+                return self.collection.find_one(query, projection=projection) # return None if no element was found
+            except Exception as e:
+                logException(e, self)
+                time.sleep(0.2)
 
+    def removeOne(self, *args, **kwargs):
+        return self.deleteOne(*args, **kwargs)
     def deleteOne(self, query=None):
         """
             Works the same as collection.delete_one but doesn't throw any Exception
@@ -426,12 +561,14 @@ class MongoCollection():
         for row in self.find():
             yield row[colName]
 
-    def items(self):
+    def items(self, projection=None):
         """
             Return an iteration (key, value) on the first "indexOn"
         """
         colName = self.getKeyColumn()
-        for row in self.find():
+        if projection is not None:
+            projection[colName] = 1
+        for row in self.find(projection=projection):
             yield (row[colName], row)
 
     def delete(self, query=None):
@@ -462,42 +599,258 @@ class MongoCollection():
         """
         # First if the user give a value, we can suppose the key is the first indexOn:
         if not isinstance(query, dict):
-            query = {self.indexOn[0]: query}
+            if self.indexOn is not None and len(self.indexOn) > 0:
+                query = {self.indexOn[0]: query}
+            else:
+                theKey = None
+                for indexKey in self.getIndexes():
+                    if indexKey != "_id":
+                        theKey = indexKey
+                        break
+                if theKey is None:
+                    raise Exception("No index to watch...")
+                query = {theKey: query}
         # Now we try to find something:
-        return self.findOne(query) is not None
+        # return self.findOne(query) is not None
+        return self.find(query).count() > 0
 
     def __len__(self):
         return self.size()
 
-def dictToMongoStorable(data, logger=None, verbose=True):
+    def map(self, processFunct, lockedProcessInit=None,
+        parallelProcesses=cpuCount(), limit=None, verbose=True,
+        shuffle=False):
+        """
+            This function will call processFunct(row, collection=None, initVars=None) given each row of the database
+            in a multiprocessing way. You can use lockedProcessInit(collection) to init vars.
+            processFunct will give you the row and a cloned collection which belong
+            to the process.
+            See databasetools.test.mongo.Test2
+        """
+        # Init global vars:
+        label = "MongoCollection map: "
+        lock = Lock()
+        tt = TicToc(logger=self.logger)
+        tt.tic()
+        # We get all ids and split them:
+        ids = list(self.distinct("_id"))
+        if limit is not None:
+            ids = ids[:limit]
+        if shuffle:
+            random.shuffle(ids)
+        idsChunks = split(ids, parallelProcesses)
+        # We remove empties cunks:
+        newIdsChunks = []
+        for current in idsChunks:
+            if current is not None and len(current) > 0:
+                newIdsChunks.append(current)
+        idsChunks = newIdsChunks
+        if verbose:
+            tt.tic(label + "getting all distincts ids done.")
+        # We execute all processes:
+        processes = []
+        for chunk in idsChunks:
+            localCollectionArgs = self.getCloneArgs()
+            p = Process(target=sequentialProcessing, args=
+            (
+                chunk, lock, localCollectionArgs,
+                processFunct, lockedProcessInit,
+                self.logger, verbose, tt,
+            ))
+            processes.append(p)
+        for p in processes:
+            p.start()
+        for p in processes:
+            p.join()
+        tt.toc("MongoCollection map done.")
+
+
+
+
+
+
+
+def mongoDistinctIds(collection, splitSize=None, logger=None, verbose=True, batchSize=10000, useSampleCache=True, sampleCacheDayClean=10):
+    from datastructuretools.hashmap import SerializableDict
+
+    # request = {'_id': ObjectId('5a8611880cef4324f19e7a72')}
+    # print("START")
+    # for current in collection.find(request):
+    #     print(current["_id"])
+
+    # exit()
+
+    colSize = collection.estimated_document_count()
+    if splitSize is None:
+        if batchSize >= colSize:
+            splitSize = 3
+        else:
+            splitSize = int(colSize / batchSize)
+    log("Getting a sample of " + str(splitSize) + " ids from " + collection.full_name + " (~4 mins if not in cache)...",
+        logger=logger, verbose=verbose)
+    tt = TicToc(logger=logger, verbose=verbose)
+    tt.tic(display=False)
+    pipeline = \
+    [
+        {"$sample": {"size": splitSize}},
+        {"$group": {"_id": None, "ids": {"$addToSet": "$_id"}}}
+    ]
+    idsSample = None
+    sampleCache = None
+    pipelineHash = objectAsKey(pipeline) + "_" + collection.full_name
+    if useSampleCache:
+        sampleCache = SerializableDict(name="mongo-ids-sample", useMongodb=False, limit=500, cleanNotReadOrModifiedSinceNDays=sampleCacheDayClean)
+        if pipelineHash in sampleCache:
+            idsSample = sampleCache[pipelineHash]
+            newIdsSample = []
+            for current in idsSample:
+                newIdsSample.append(ObjectId(current))
+            idsSample = newIdsSample
+    if idsSample is None:
+        aggregation = collection.aggregate(pipeline)
+        for current in aggregation:
+            idsSample = current["ids"]
+        idsSample = sorted(idsSample)
+        if useSampleCache:
+            sampleCache[pipelineHash] = idsSample
+            sampleCache.save()
+        tt.toc()
+    ids = set()
+    pbar = ProgressBar(len(idsSample) + 1, printRatio=0.1,
+        logger=logger, verbose=verbose)
+    log("Getting all distincts ids from " + collection.full_name + "...",
+        logger=logger, verbose=verbose)
+    for u in range(-1, len(idsSample)):
+        match = {"$match": {"_id": {}}}
+        condition = match["$match"]["_id"]
+        if u != -1:
+            # WHY ? Maybe due to the version... TODO handle this case...
+            if isHostname("hjlat"):
+                condition["$gte"] = str(idsSample[u]) # v3.2.20
+            else:
+                condition["$gte"] = idsSample[u] # v3.4.9
+        if u + 1 < len(idsSample):
+            if isHostname("hjlat"):
+                condition["$lt"] = str(idsSample[u + 1])
+            else:
+                condition["$lt"] = idsSample[u + 1]
+        # print(match)
+        pipeline = \
+        [
+            match,
+            {"$group": {"_id": None, "ids": {"$addToSet": "$_id"}}},
+        ]
+        aggregation = collection.aggregate(pipeline)
+        currentIds = None
+        for current in aggregation:
+            currentIds = current["ids"]
+        # print(currentIds)
+        if currentIds is not None:
+            for currentId in currentIds:
+                ids.add(currentId)
+        pbar.tic()
+    if len(ids) < colSize:
+        logWarning("The estimated size of the collection " + collection.full_name + " (" + str(colSize) + ") is higher than the distinct ids count (" + str(len(ids)) + ").", logger, verbose=verbose)
+    return ids
+
+
+# We define the function which will be called for each chunk:
+def sequentialProcessing(chunk, lock, localCollectionArgs, processFunct, lockedProcessInit, logger, verbose, tt, progressionPercentDisp=1):
+    if chunk is None or len(chunk) == 0:
+        return
+    # We make all local vars:
+    label = "MongoCollection map: "
+    name = getRandomName()
+    localTT = TicToc(logger=logger)
+    initVars = None
+    # We init all proceses:
+    with lock:
+        localCollection = MongoCollection(*localCollectionArgs[0], **localCollectionArgs[1])
+        if lockedProcessInit is not None:
+            initVars = lockedProcessInit(localCollection)
+        duration = truncateFloat(tt.tic(display=False), 2)
+        log(label + name + " initialized in " + str(duration) + "s.", logger, verbose=verbose)
+    # We make all counters:
+    i = 0
+    allDurations = []
+    # We iterate on all ids:
+    for id in chunk:
+        row = localCollection.findOne({"_id": id})
+        try:
+            processFunct(row, localCollection, initVars=initVars)
+        except Exception as e:
+            logException(e, logger, message=label + name,
+                location="MongoCollection.map")
+        i += 1
+        duration = localTT.tic(display=False)
+        allDurations.append(duration)
+        doneRatio = i / len(chunk) * 100
+        if doneRatio > 0 and doneRatio % progressionPercentDisp == 0:
+            doneRatio = int(doneRatio)
+            average = truncateFloat(sum(allDurations) / float(len(allDurations)), 2)
+            averageMessage = ""
+            if average > 0.01:
+                averageMessage = " (mean duration: " + str(average) + "s)"
+            message = label + str(doneRatio) + "% by " + name + averageMessage + "."
+            log(message, logger, verbose=verbose)
+    log(label + name + " did 100%.", logger, verbose=verbose)
+
+def dictToMongoStorable(data, logger=None, verbose=True, dollarEscape="__mongostorabledollar__", normalizeKeys=True, normalizeEnums=True, normalizeBigInts=True, convertTuples=True, convertSets=True):
     """
         This function convert all set() in list()
         and all "." in keys will be replaced by "_"
     """
+    kwargs = \
+    {
+        "dollarEscape": dollarEscape,
+        "logger": logger,
+        "verbose": verbose,
+        "normalizeKeys": normalizeKeys,
+        "normalizeEnums": normalizeEnums,
+        "normalizeBigInts": normalizeBigInts,
+        "convertTuples": convertTuples,
+        "convertSets": convertSets,
+    }
     if data is None:
         return None
     if isinstance(data, tuple):
-        data = list(data)
+        if convertTuples:
+            data = list(data)
+        else:
+            return data
+    if isinstance(data, int):
+        if normalizeBigInts and intByteSize(data) >= 8:
+            return str(data)
+        else:
+            return data
     if isinstance(data, str) or \
-       isinstance(data, int) or \
        isinstance(data, float) or \
        isinstance(data, bool):
         return data
     if isinstance(data, enum.Enum) and hasattr(data, 'name'):
-        return data.name
+        if normalizeEnums:
+            return data.name
+        else:
+            return data
     if isinstance(data, set):
         # logWarning("Can't store a set in MongoDB!", logger=logger, verbose=verbose)
-        return list(data)
+        if convertSets:
+            return list(data)
+        else:
+            return data
     if isinstance(data, list):
         newList = []
         for current in data:
-            newList.append(dictToMongoStorable(current))
+            newList.append(dictToMongoStorable(current, **kwargs))
         return newList
     if isinstance(data, dict):
         newData = {}
         for key, value in data.items():
-            value = dictToMongoStorable(value)
-            key = key.replace(".", "_")
+            value = dictToMongoStorable(value, **kwargs)
+            if normalizeKeys:
+                key = key.replace(".", "_")
+                if key.startswith("$"):
+                    key = dollarEscape + key[1:]
             newData[key] = value
         return newData
     if isinstance(data, object):
@@ -505,6 +858,10 @@ def dictToMongoStorable(data, logger=None, verbose=True):
         return str(data)
     else:
         return data
+
+
+
+
 
 def testDisplay():
     mc = MongoCollection("test", "collection1", verbose=True, indexOn="t")

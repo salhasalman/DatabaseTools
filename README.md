@@ -23,6 +23,8 @@ This class allow an easy config of a MongoDB collection by providing an interfac
  * The first `indexOn` works like the key of a Python dict so you can use `in` (e.g. `15466 in collection` which is equivalent to `pymongoCollection.find_one({"user_id": 15466}) is not None`).
  * You can also use `__len__` (e.g. `len(collection)`), `__getitem__` (e.g. `collection[15466]`, only in the case you gave at least one `indexOn` at the `__init__`), `__setitem__` and `__delitem__`. Read the [unit test](https://github.com/hayj/DatabaseTools/blob/master/databasetools/test/mongo.py) to have concrete examples.
  * Provide top levels methods like `toDataFrame`, `renameField`, `createIndex`, `getIndexes`, `dropAllIndexes`, `dropIndex`, `resetDatabase`, `resetCollection`... See the code documentation for more details.
+ * Provide a map function to request/update in parallel (see the docstring).
+ * Overcomes the document max size (16mb) when calling `distinct` using a trick based on batch samples. 
 
 ## Parameters
 
