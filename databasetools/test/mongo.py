@@ -12,8 +12,8 @@ from databasetools import mongo
 from databasetools.mongo import *
 from unshortener.unshortener import *
 
-min = 0
-max = 4
+min = 2
+max = 2
 assert min <= max
 
 print("==============\nStarting unit tests...")

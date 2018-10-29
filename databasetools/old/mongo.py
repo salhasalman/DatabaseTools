@@ -617,26 +617,25 @@ class MongoCollection():
     def __len__(self):
         return self.size()
 
-    def map(self, processFunct, lockedProcessInit=None, terminatedFunct=None, parallelProcesses=cpuCount(), limit=None, shuffle=False):
+    def map(self, processFunct, lockedProcessInit=None,
+        parallelProcesses=cpuCount(), limit=None, verbose=True,
+        shuffle=False):
         """
-            Callbacks:
-             * processFunct: processFunct(row, localCollection, initVars=None). localCollection is a clone of the collection for the current process. Row is the current row to process. initVars is vars you returned in lockedProcessInit.
-             * lockedProcessInit: lockedProcessInit(localCollection). Have to return vars of the current process. This callback is called once.
-             * terminatedFunct: terminatedFunct(localCollection, initVars=None)
-
-            This function will call processFunct(row, collection=None, initVars=None) given each row of the database in a multiprocessing way. You can use lockedProcessInit(collection) to init vars. processFunct will give you the row and a cloned collection which belong
+            This function will call processFunct(row, collection=None, initVars=None) given each row of the database
+            in a multiprocessing way. You can use lockedProcessInit(collection) to init vars.
+            processFunct will give you the row and a cloned collection which belong
             to the process.
             See databasetools.test.mongo.Test2
         """
         # Init global vars:
         label = "MongoCollection map: "
         lock = Lock()
+        pbar = ProgressBar(logger=self.logger)
+        q = pbar.startQueue()
         # We get all ids and split them:
         ids = list(self.distinct("_id"))
         if limit is not None:
             ids = ids[:limit]
-        pbar = ProgressBar(len(ids), logger=self.logger, verbose=self.verbose, printRatio=0.01)
-        q = pbar.startQueue()
         if shuffle:
             random.shuffle(ids)
         idsChunks = split(ids, parallelProcesses)
@@ -653,15 +652,15 @@ class MongoCollection():
             p = Process(target=sequentialProcessing, args=
             (
                 chunk, lock, localCollectionArgs,
-                processFunct, lockedProcessInit, terminatedFunct,
-                self.verbose, q,
+                processFunct, lockedProcessInit,
+                self.logger, self.verbose, q,
             ))
             processes.append(p)
         for p in processes:
             p.start()
         for p in processes:
             p.join()
-        pbar.stopQueue()
+        q.stopQueue()
         log("MongoCollection map done.", self)
 
 
@@ -760,24 +759,24 @@ def mongoDistinctIds(collection, splitSize=None, logger=None, verbose=True, batc
 
 
 # We define the function which will be called for each chunk:
-def sequentialProcessing(chunk, lock, localCollectionArgs, processFunct, lockedProcessInit, terminatedFunct, verbose, q, progressionPercentDisp=1):
+def sequentialProcessing(chunk, lock, localCollectionArgs, processFunct, lockedProcessInit, logger, verbose, q, progressionPercentDisp=1):
     if chunk is None or len(chunk) == 0:
         return
     # We make all local vars:
     label = "MongoCollection map: "
     name = getRandomName()
-    localTT = TicToc()
-    localTT.tic(display=False)
+    localTT = TicToc(logger=logger)
     initVars = None
     # We init all proceses:
     with lock:
         localCollection = MongoCollection(*localCollectionArgs[0], **localCollectionArgs[1])
         if lockedProcessInit is not None:
             initVars = lockedProcessInit(localCollection)
-        duration = truncateFloat(localTT.toc(display=False), 2)
-        log(label + name + " initialized in " + str(duration) + "s.", verbose=verbose)
+        duration = truncateFloat(tt.tic(display=False), 2)
+        log(label + name + " initialized in " + str(duration) + "s.", logger, verbose=verbose)
     # We make all counters:
     i = 0
+    allDurations = []
     # We iterate on all ids:
     for id in chunk:
         row = localCollection.findOne({"_id": id})
@@ -787,9 +786,19 @@ def sequentialProcessing(chunk, lock, localCollectionArgs, processFunct, lockedP
             logException(e, logger, message=label + name,
                 location="MongoCollection.map")
         i += 1
+        duration = localTT.tic(display=False)
+        allDurations.append(duration)
+        doneRatio = i / len(chunk) * 100
+        if doneRatio > 0 and doneRatio % progressionPercentDisp == 0:
+            doneRatio = int(doneRatio)
+            average = truncateFloat(sum(allDurations) / float(len(allDurations)), 2)
+            averageMessage = ""
+            if average > 0.01:
+                averageMessage = " (mean duration: " + str(average) + "s)"
+            message = label + str(doneRatio) + "% by " + name + averageMessage + "."
+            log(message, logger, verbose=verbose)
         q.put(None) # For the ProgressBar
-    if terminatedFunct is not None:
-        terminatedFunct(localCollection, initVars=initVars)
+    log(label + name + " did 100%.", logger, verbose=verbose)
 
 def dictToMongoStorable(data, logger=None, verbose=True, dollarEscape="__mongostorabledollar__", normalizeKeys=True, normalizeEnums=True, normalizeBigInts=True, convertTuples=True, convertSets=True):
     """
