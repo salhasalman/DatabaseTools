@@ -97,9 +97,6 @@ class MongoCollection():
         databaseRoot=None,
         hideIndexException=False,
     ):
-        """
-            Read the README
-        """
         # All vars :
         self.hideIndexException = hideIndexException
         self.logger = logger
