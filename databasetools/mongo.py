@@ -788,6 +788,9 @@ def sequentialProcessing(chunk, lock, localCollectionArgs, processFunct, lockedP
     if terminatedFunct is not None:
         terminatedFunct(localCollection, initVars=initVars)
 
+def toMongoStorable(*args, **kwargs):
+    return dictToMongoStorable(*args, **kwargs)
+
 def dictToMongoStorable(data, logger=None, verbose=True, dollarEscape="__mongostorabledollar__", normalizeKeys=True, normalizeEnums=True, normalizeBigInts=True, convertTuples=True, convertSets=True):
     """
         This function convert all set() in list()
