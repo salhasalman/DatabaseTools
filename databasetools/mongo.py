@@ -555,7 +555,7 @@ class MongoCollection():
             Return column names
         """
         colName = self.getKeyColumn()
-        for row in self.find():
+        for row in self.find(projection={colName: 1}):
             yield row[colName]
 
     def items(self, projection=None):
