@@ -788,6 +788,8 @@ def sequentialProcessing(chunk, lock, localCollectionArgs, processFunct, lockedP
     if terminatedFunct is not None:
         terminatedFunct(localCollection, initVars=initVars)
 
+def mongoStorable(*args, **kwargs):
+    return dictToMongoStorable(*args, **kwargs)
 def toMongoStorable(*args, **kwargs):
     return dictToMongoStorable(*args, **kwargs)
 
