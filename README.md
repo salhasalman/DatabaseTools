@@ -48,7 +48,7 @@ If you are on Ubuntu, I recommend to follow this tutorial if you want to install
 
 # MongoFS
 
-This class is a dict-like object and allow you to store large data in mongodb.
+This class (dict-like) allows you to store large data in mongodb.
 
 ## Usage
 
