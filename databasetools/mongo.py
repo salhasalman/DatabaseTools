@@ -8,17 +8,37 @@ from systemtools.basics import *
 from systemtools.logger import *
 from systemtools.system import *
 from systemtools.hayj import *
+from datatools.jsonutils import *
 from datastructuretools.processing import *
 import urllib
 import enum
 from multiprocessing import Lock, Process
 import copy
 from bson.objectid import ObjectId
+import numpy as np
+import pickle
+import gridfs
 
 # TODO expireAfterSeconds: <int> Used to create an expiring (TTL) collection. MongoDB will automatically delete documents from this collection after <int> seconds. The indexed field must be a UTC datetime or the data will not expire.
 # unique: if True creates a uniqueness constraint on the index.
 #  my_collection.create_index([("mike", pymongo.DESCENDING), # on peut mettre HASHED
 #                             ("eliot", pymongo.ASCENDING)]) # Par default ascending
+
+def getTimestampSamples(collection, request={}, n=100):
+    """
+        This function return a sample of a collection by picking rows
+        regularly on the timestamp axe.
+    """
+    n = int(n / 2)
+    rows = list(collection.find(request, projection={"_id": 1, "timestamp": 1}))
+    rows = list(sorted(rows, key=lambda x: x["timestamp"]))
+    rows = split(rows, 50)
+    newRows = []
+    for e in rows:
+        newRows.append(collection.findOne({"_id": e[0]["_id"]}))
+        newRows.append(collection.findOne({"_id": e[-1]["_id"]}))
+    rows = newRows
+    return rows
 
 def idsToMongoHost(host="localhost", user=None, password=None, port="27017", databaseRoot=None):
     if host is None:
@@ -96,8 +116,10 @@ class MongoCollection():
         host=None,
         databaseRoot=None,
         hideIndexException=False,
+        globalDumpStrategy=None,
     ):
         # All vars :
+        self.globalDumpStrategy = globalDumpStrategy
         self.hideIndexException = hideIndexException
         self.logger = logger
         self.verbose = verbose
@@ -207,6 +229,7 @@ class MongoCollection():
 
     def update(self, query, updateQuery):
 #         self.collection.update(query, updateQuery, multi=True)
+        updateQuery = toSerializableJson(updateQuery, globalDumpStrategy=self.globalDumpStrategy, mongoStorable=True, escapeMongoKeys=False, logger=self.logger, verbose=self.verbose)
         self.collection.update_many(query, updateQuery)
 
     def __setitem__(self, firstIndexOnValue, value):
@@ -220,6 +243,7 @@ class MongoCollection():
         """
             Update rows but add the "$set" key automatically
         """
+        setQuery = toSerializableJson(setQuery, globalDumpStrategy=self.globalDumpStrategy, mongoStorable=True, logger=self.logger, verbose=self.verbose)
         setQuery = {"$set": setQuery}
         self.collection.update_many(query, setQuery)
 
@@ -227,6 +251,7 @@ class MongoCollection():
         """
             Works the same as pymongo collection.update_one
         """
+        updateQuery = toSerializableJson(updateQuery, globalDumpStrategy=self.globalDumpStrategy, mongoStorable=True, escapeMongoKeys=False, logger=self.logger, verbose=self.verbose)
         self.collection.update_one(query, updateQuery)
 
 #     def show(self, *args, **kwargs):
@@ -303,12 +328,12 @@ class MongoCollection():
         except Exception as e:
             if field == "_id":
                 log(str(e) + "\nWe retry using batch samples...", self)
-                return mongoDistinctIds(self.collection,
-                    logger=self.logger, verbose=self.verbose)
+                return mongoDistinctIds(self.collection, logger=self.logger, verbose=self.verbose)
             else:
-                raise e
-                return None
-        
+                elements = set()
+                for row in self.find({}, projection={field: True}):
+                    elements.add(row[field])
+                return elements
 
     def clone(self):
         return MongoCollection \
@@ -439,7 +464,8 @@ class MongoCollection():
                 row = [row]
             for currentRow in row:
                 currentRow = copy.deepcopy(currentRow)
-                currentRow = dictToMongoStorable(currentRow)
+                # currentRow = dictToMongoStorable(currentRow) # deprecated
+                currentRow = toSerializableJson(currentRow, mongoStorable=True, globalDumpStrategy=self.globalDumpStrategy, logger=self.logger, verbose=self.verbose)
                 if self.version is not None and "version" not in currentRow:
                     currentRow["version"] = self.version
                 if self.giveTimestamp and "timestamp" not in currentRow:
@@ -488,13 +514,15 @@ class MongoCollection():
         # https://stackoverflow.com/questions/12664816/random-sampling-from-mongo
         pass # TODO
 
-    def find(self, query={}, limit=0, sort=None, projection=None, **kwargs):
+    def find(self, query=None, limit=0, sort=None, projection=None, **kwargs):
         """
             Works the same as pymongo collection.find but query is optionnal
             sort example: sort=("timestamp", pymongo.DESCENDING)
             Warning, sometimes projection doesn't work for a huge find.
             projection example: projection={‘_id’: True}
         """
+        if query is None:
+            query = dict()
         if sort is not None and not isinstance(sort, list):
             sort = [sort]
 #         if projection is not None and limit == 0:
@@ -509,14 +537,22 @@ class MongoCollection():
 
     def __getitem__(self, o):
         key = self.getKeyColumn()
-        return self.findOne({key: o})
-    def findOne(self, query={}, projection=None):
+        obj = self.findOne({key: o})
+        obj = fromSerializableJson(obj, logger=self.logger, verbose=self.verbose)
+        return obj
+    def findOne(self, query=None, sort=None, projection=None):
         """
             Works the same as pymongo collection.find_one
         """
+        if query is None:
+            query = dict()
+        if sort is not None and not isinstance(sort, list):
+            sort = [sort]
         for i in range(2):
             try:
-                return self.collection.find_one(query, projection=projection) # return None if no element was found
+                obj = self.collection.find_one(query, sort=sort, projection=projection) # return None if no element was found
+                obj = fromSerializableJson(obj, logger=self.logger, verbose=self.verbose)
+                return obj
             except Exception as e:
                 logException(e, self)
                 time.sleep(0.2)
@@ -590,11 +626,13 @@ class MongoCollection():
 
     def __contains__(self, key):
         return self.has(key)
-    def has(self, query={}):
+    def has(self, query=None):
         """
             This method return True if the given object is found with the first "indexOn"
         """
         # First if the user give a value, we can suppose the key is the first indexOn:
+        if query is None:
+            query = dict()
         if not isinstance(query, dict):
             if self.indexOn is not None and len(self.indexOn) > 0:
                 query = {self.indexOn[0]: query}
@@ -660,11 +698,6 @@ class MongoCollection():
             p.join()
         pbar.stopQueue()
         log("MongoCollection map done.", self)
-
-
-
-
-
 
 
 def mongoDistinctIds(collection, splitSize=None, logger=None, verbose=True, batchSize=10000, useSampleCache=True, sampleCacheDayClean=10):
@@ -851,12 +884,169 @@ def dictToMongoStorable(data, logger=None, verbose=True, dollarEscape="__mongost
                     key = dollarEscape + key[1:]
             newData[key] = value
         return newData
+    if isinstance(data, np.float32) or isinstance(data, np.float64):
+        return float(data)
     if isinstance(data, object):
 #         logWarning("Can't store an object in MongoDB!", logger=logger, verbose=verbose)
         return str(data)
     else:
         return data
 
+
+class MongoFS:
+    def __init__\
+    (
+        self,
+        user=None, password=None, host=None, port="27017", databaseRoot=None,
+        dbName='gridfs', primaryKey='id', metaField='meta',
+        indexOn=None, indexNotUniqueOn=None,
+        logger=None, verbose=True,
+        globalDumpStrategy=None,
+    ):
+        self.dbName = dbName
+        self.primaryKey = primaryKey
+        self.globalDumpStrategy = globalDumpStrategy
+        self.metaField = metaField
+        self.logger = logger
+        self.verbose = verbose
+        self.user = user
+        self.password = password
+        self.host = host
+        self.port = port
+        self.databaseRoot = databaseRoot
+        self.scheme = idsToMongoHost\
+        (
+            host=self.host, user=self.user, password=self.password,
+            port=self.port, databaseRoot=self.databaseRoot,
+        )
+        self.db = MongoClient(host=self.scheme)[dbName]
+        self.collection = self.db.fs.files
+        self.fs = gridfs.GridFS(self.db)
+        if indexOn is None:
+            indexOn = set()
+        if not (isinstance(indexOn, list) or isinstance(indexOn, set)):
+            indexOn = [indexOn]
+        indexOn = set(indexOn)
+        if indexNotUniqueOn is None:
+            indexNotUniqueOn = set()
+        if not (isinstance(indexNotUniqueOn, list) or isinstance(indexOn, set)):
+            indexNotUniqueOn = [indexNotUniqueOn]
+        indexNotUniqueOn = set(indexNotUniqueOn)
+        self.indexOn = indexOn
+        if self.primaryKey not in self.indexOn:
+            self.indexOn.add(self.primaryKey)
+        self.indexNotUniqueOn = indexNotUniqueOn
+        self.createIndexes(self.indexOn, unique=True)
+        self.createIndexes(self.indexNotUniqueOn, unique=False)
+        
+        
+    def __getitem__(self, *args, **kwargs):
+        return self.get(*args, **kwargs)
+    def get(self, key):
+        f = self.fs.find_one({self.primaryKey: key})
+        data = self.__deser(f.read())
+        f.close()
+        return data
+    def getMeta(self, key):
+        return fromSerializableJson(self.collection.find_one({self.primaryKey: key})[self.metaField])
+    def find(self, query=None, limit=0, sort=None, **kwargs):
+        """
+            This function return a generator that generate tuple (data, metadata)
+            
+            Works the same as pymongo collection.find but query is optionnal
+            sort example: sort=("timestamp", pymongo.DESCENDING)
+        """
+        if query is None:
+            query = dict()
+        if not isinstance(query, dict):
+            query = {self.primaryKey: query}
+        newQuery = dict()
+        for k in query.keys():
+            nk = k
+            if k != self.primaryKey and not k.startswith(self.metaField + "."):
+                nk = self.metaField + "." + k
+            newQuery[nk] = query[k]
+        query = newQuery
+        if sort is not None and not isinstance(sort, list):
+            sort = [sort]
+        cursor = None
+        for i in range(2):
+            try:
+                cursor = self.collection.find(query, limit=limit, sort=sort, **kwargs)
+            except Exception as e:
+                logException(e, self)
+                time.sleep(0.2)
+        if cursor is not None:
+            for current in cursor:
+                data = self[current[self.primaryKey]]
+                yield (data, fromSerializableJson(current[self.metaField]))
+    def findOne(self, *args, **kwargs):
+        for current in self.find(*args, **kwargs):
+            return current
+        
+    
+    def __len__(self):
+        return self.collection.count_documents({})
+    
+    def items(self):
+        for data, meta in self.find():
+            yield (meta[self.primaryKey], data)
+    def __iter__(self):
+        for key in self.keys():
+            yield key
+    def __contains__(self, key):
+        result = self.collection.find_one({self.primaryKey: key})
+        return result is not None
+    def __delitem__(self, key):
+        if key in self:
+            row = self.collection.find_one({self.primaryKey: key})
+            currentId = row['_id']
+            self.fs.delete(currentId)
+    
+    def __ser(self, obj):
+        return pickle.dumps(obj)
+    def __deser(self, obj):
+        return pickle.loads(obj)
+    
+    def __setitem__(self, key, obj):
+        self.insert(key, obj)
+    def put(self, *args, **kwargs):
+        self.insert(*args, **kwargs)
+    def insert(self, key, obj, meta=None, **kwargs):
+        if meta is None:
+            meta = dict()
+        if kwargs is not None and len(kwargs) > 0:
+            meta = mergeDicts(meta, kwargs)
+        if self.primaryKey in meta:
+            raise Exception('You cannot give the field ' + self.primaryKey +
+                            ' since it is used as the primary key for the mongodb collection.')
+        meta[self.primaryKey] = key
+        meta = toSerializableJson\
+        (
+            meta, mongoStorable=True,
+            globalDumpStrategy=self.globalDumpStrategy,
+            logger=self.logger, verbose=self.verbose,
+        )
+        sobj = self.__ser(obj)
+        self.fs.put(sobj, **{'meta': meta, self.primaryKey: key})
+    
+    def keys(self):
+        return set([e[1][self.primaryKey] for e in self.find({})])
+    
+    def createIndexes(self, *args, **kwargs):
+        self.createIndex(*args, **kwargs)
+    def createIndex(self, indexes, unique=True, indexType=None, background=True):
+        """
+            Create an index (or a list of) by name(s), unique indicate if the index has to be unique
+        """
+        if indexes is not None:
+            for index in indexes:
+                if indexType is not None:
+                    index = [(index, indexType)]
+                try:
+                    self.collection.create_index(index, unique=unique, background=background)
+                except Exception as e:
+                    logError("Unable to create index " + str(index) + " in the mongo gridfs " + self.dbName, self)
 
 
 

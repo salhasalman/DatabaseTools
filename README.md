@@ -1,11 +1,11 @@
-# MongoCollection
-
-This class allow an easy config of a MongoDB collection by providing an interface which handle authentication, indexes management, data conversion and pretty print of collections. It can work like a Python dict if you give at least one index.
-
-## Installation (Python 3)
+# Installation (Python 3)
 
 	git clone https://github.com/hayj/DatabaseTools.git
 	pip install ./DatabaseTools/wm-dist/*.tar.gz
+
+# MongoCollection
+
+This class allow an easy config of a MongoDB collection by providing an interface which handle authentication, indexes management, data conversion and pretty print of collections. It can work like a Python dict if you give at least one index.
 
 ## Usage
 
@@ -44,3 +44,83 @@ This class allow an easy config of a MongoDB collection by providing an interfac
 ## MongoDB installation
 
 If you are on Ubuntu, I recommend to follow this tutorial if you want to install MongoDB on localhost : <https://docs.mongodb.com/manual/tutorial/install-mongodb-on-ubuntu/>. Or you can open the database and secure it: <https://www.digitalocean.com/community/tutorials/how-to-install-and-secure-mongodb-on-ubuntu-16-04>.
+
+
+# MongoFS
+
+This class is a dict-like object and allow you to store large data in mongodb.
+
+## Usage
+
+Import the class:
+
+	from databasetools.mongo import MongoFS
+
+Init the GridFS API with mongodb credentials:
+
+	(user, password, host) = getMongoAuth(user='hayj')
+	mfs = MongoFS(user=user, password=password, host=host) # use `dbName` to choose the database name
+
+Insert any object by using item set (dict-like):
+
+	largeObject = {'field1': np.array([0, 1, 2]), 'field2': {5, 6, 6, 8}} # This object can be large (> 16Mo)
+	mfs['a'] = largeObject
+
+You can also give metadata using the `insert` method and kwargs:
+
+	mfs.insert('b', np.array([0, 1, 2]), extraInfos={5, 6, 6, 8})
+
+Or by using the kwargs `meta`:
+
+	mfs.insert('c', np.array([0] * 1000000), meta={'length': 1000000})
+
+Print the number of row you stored in the mongodb GridFS:
+
+	print(len(mfs))
+
+Get data by giving the key:
+
+	print(mfs['a'])
+
+Get metadata by giving the key:
+
+	print(mfs.getMeta('b'))
+
+Get a (data, metadata) by giving the key:
+
+	(data, meta) = mfs.findOne("b")
+	print(str(data) + " with metadata " + str(meta))
+
+Get all (key, data) tuples:
+
+	for key, data in mfs.items():
+		print(str(key) + ": " + str(data)[:100])
+
+Get all (data, metadata) tuples:
+
+	for data, meta in mfs.find():
+		print(str(data)[:100] + " with metadata " + str(meta))
+
+Get key by iterating the dict:
+
+	for key in mfs:
+		print(key)
+
+Or by calling the `keys` method:
+
+	print(mfs.keys())
+
+Delete an item by giving its key:
+
+	del mfs['a']
+	del mfs['b']
+	del mfs['c']
+
+Check an item exists by giving its key:
+
+	print('c' in mfs)
+
+
+
+
+
